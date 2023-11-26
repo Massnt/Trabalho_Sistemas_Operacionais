@@ -1,9 +1,16 @@
+/*
+* Trabalho Realizado pela Disciplina de Sistemas Operacionais I
+* Data: 27/11/2023
+* Professor: Marcos Paulo Moro
+* Aluno: Mateus Souza Silva
+*/
+
+// Bibliotecas Utilizadas
 #include <iostream>
 #include <ctime>
 #include <cstdlib>
 #include <cmath>
 #include <vector>
-#include <atomic>
 #include <windows.h>
 
 #define TEXTO_MENU "-----------------------------------------------------------------\n\n\
@@ -18,6 +25,8 @@
 -----------------------------------------------------------------"
 #define TAM_MAX_RAND 99999999
 
+
+// Estruturas das threads e submatrizes
 using namespace std;
 
 typedef struct {
@@ -37,7 +46,7 @@ vector<vector<long int>> matriz;
 vector<HANDLE> hThreads;
 vector<PARAM> params;
 vector<SUBMAT> subMatrizes;
-HANDLE iniciaThreads;
+HANDLE iniciaThreads, secCritPrimo;
 
 void criarMatriz(int l, int c) {
     matriz = vector<vector<long int>>(l, vector<long int>(c, 0));
@@ -59,7 +68,12 @@ bool inicializarMatriz(int l, int c, int semente) {
     return true;
 }
 
+// As submatrizes são criadas a partir de um tamanho definido pelo usuário
+// Utilizando uma lógica que evita que qualquer dado não seja adicionado
+// nas submatrizes ao mesmo tempo que respeita a dimensão da matriz original
 void criarSubMatrizes(long int linhas, long int colunas, int l, int c) {
+    subMatrizes.clear();
+
     for (long int i = 0; i < linhas; i += l) {
         for (long int j = 0; j < colunas; j += c) {
             SUBMAT subMatriz;
@@ -74,20 +88,7 @@ void criarSubMatrizes(long int linhas, long int colunas, int l, int c) {
     }
 }
 
-void criarThreads(int numThreads) {
-    PARAM add;
-    for (int i = 0; i < numThreads; i++) {
-        add.id = i;
-        add.tempoProcessamento = 0;
-        add.numTh = numThreads;
-        params.push_back(add);
-    }
-
-    for (int i = 0; i < numThreads; i++) {
-        hThreads.push_back(CreateThread(NULL, 0, processaSubMatriz, &params[i], 0, NULL));
-    }
-}
-
+// O algoritmo mais eficiente para verificar números primos
 bool ehPrimo(long int v) {
     if (v <= 2) {
         return false;
@@ -100,6 +101,8 @@ bool ehPrimo(long int v) {
     return true;
 }
 
+// Função que têm como paramêtros inicio e o fim de uma submatriz
+// Retorna a quantidade de primos na submatriz 
 long int processaPrimos(int ini[2], int fim[2]) {
     long int cont = 0;
 
@@ -111,6 +114,9 @@ long int processaPrimos(int ini[2], int fim[2]) {
     return cont;
 }
 
+// Função que as Threads executam para processar a matriz, seguindo 
+// o algoritmo de busca de serviço, onde quando uma thread termina
+// busca a próxima submatriz livre
 DWORD WINAPI processaSubMatriz(LPVOID paramF) {
     PARAM* p = (PARAM*)paramF;
     time_t tempoInicial, tempoFinal;
@@ -122,8 +128,8 @@ DWORD WINAPI processaSubMatriz(LPVOID paramF) {
 
     cont = processaPrimos(subMatrizes[p->id].ini, subMatrizes[p->id].fim);
     subMatrizes[p->id].processada = true;
-    
-    for (int i = p->id + p->numTh; i < (int)subMatrizes.size(); i+=p->numTh) {
+
+    for (int i = p->id + p->numTh; i < (int)subMatrizes.size(); i += p->numTh) {
         if (!subMatrizes[i].processada)
         {
             subMatrizes[i].processada = true;
@@ -131,8 +137,9 @@ DWORD WINAPI processaSubMatriz(LPVOID paramF) {
             cont += processaPrimos(subMatrizes[i].ini, subMatrizes[i].fim);
         }
     }
-
+    WaitForSingleObject(secCritPrimo, INFINITE);
     numPrimos += cont;
+    ReleaseMutex(secCritPrimo);
 
     tempoFinal = time(0);
     params[p->id].tempoProcessamento = tempoFinal - tempoInicial;
@@ -140,6 +147,23 @@ DWORD WINAPI processaSubMatriz(LPVOID paramF) {
     ResetEvent(iniciaThreads);
 
     return 0;
+}
+
+void criarThreads(int numThreads) {
+    PARAM add;
+
+    params.clear();
+
+    for (int i = 0; i < numThreads; i++) {
+        add.id = i;
+        add.tempoProcessamento = 0;
+        add.numTh = numThreads;
+        params.push_back(add);
+    }
+
+    for (int i = 0; i < numThreads; i++) {
+        hThreads.push_back(CreateThread(NULL, 0, processaSubMatriz, &params[i], 0, NULL));
+    }
 }
 
 time_t modoSerial(int l, int c) {
@@ -163,6 +187,8 @@ time_t modoSerial(int l, int c) {
     return tempoFinal - tempoInicial;
 }
 
+// Para a execução das threads foi utilizado um evento ao invés de 
+// "acordar" todas as threads de uma vez
 time_t modoParalelo() {
     time_t tempoInicial = 0, tempoFinal = 0;
 
@@ -179,7 +205,9 @@ time_t modoParalelo() {
     return tempoFinal - tempoInicial;
 }
 
-void executar(time_t *tempoTotalSerial, time_t *tempoTotalParalelo, int linha, int coluna, bool *serialExec, bool *paraleloExec) {
+void executar(time_t *tempoTotalSerial, time_t *tempoTotalParalelo, int linha,
+    int coluna, bool *serialExec, bool *paraleloExec) 
+{
     short int modo;
     bool ctrl = true;
 
@@ -211,7 +239,7 @@ void relatorioSerial(time_t tempoTotalSerial) {
 }
 
 void relatorioParalelo(time_t tempoTotalParalelo) {
-    cout << "Processamentos das Threads Individualmente" << endl;
+    cout << endl << "Processamentos das Threads Individualmente" << endl << endl;
 
     for (auto i : params) {
         cout << "Processamento Thread " << i.id << ":" << i.tempoProcessamento << "s" << endl;
@@ -244,77 +272,110 @@ void relatorio(time_t tempoTotalSerial, time_t tempoTotalParalelo, bool serialEx
         naoExecutadoStr();
 }
 
-void encerrar(long int numElementos) {
-    for (int i = 0; i < hThreads.size(); i++)
-        CloseHandle(hThreads[i]);
-
+void limpaMatriz(int numElementos) {
     for (int i = 0; i < numElementos; i++)
         matriz[i].clear();
     matriz.clear();
 }
 
+void encerrar(int numElementos) {
+    for (int i = 0; i < hThreads.size(); i++)
+        CloseHandle(hThreads[i]);
 
+    limpaMatriz(numElementos);
+}
 
+//Função que organiza as execuções baseada em menu
+// Todos os tratamentos necessários foram feitos nesta função
+// Fazendo com que o usuário apenas execute na ordem correta
 void menu() {
     time_t tempoTotalSerial = 0,  tempoTotalParalelo = 0;
     int op, semente = 0, numThreads = 0, linha = 0, coluna = 0, subMatL, subMatC;
-    bool ctrl = true, paraleloExec = false, serialExec = false;
+    bool ctrl = true, paraleloExec = false, serialExec = false, matrizCriada = false;
+    bool initM =  false, relatPronto = false, subMatCriada = false, threadsCriada = false;
+
 
     while (ctrl) {
         cout << TEXTO_MENU << endl;
         cin >> op;
 
         system("cls");
-        cout << "Numero de submatrizes:" << subMatrizes.size() << endl;
 
         switch (op) {
         case 1:
-            cout << "\nDigite a dimensão da matriz, ordem LXC:";
-            cin >> linha >> coluna;
+            if (initM)
+                limpaMatriz(coluna);
+
+            do {
+                cout << "\nDigite a dimensão da matriz, ordem LXC:";
+                cin >> linha >> coluna;
+            } while (linha <= 0 or coluna <= 0);
 
             criarMatriz(linha, coluna);
+            matrizCriada = true;
             break;
         case 2:
-            cout << "\nDigite a semente que deseja:";
-            cin >> semente;
+            do {
+                cout << "\nDigite a semente que deseja:";
+                cin >> semente;
+            } while (semente <= 0);
             break;
         case 3:
-            if (inicializarMatriz(linha, coluna, semente))
+            initM = inicializarMatriz(linha, coluna, semente);
+            if (initM)
                 cout << "Matriz inicializada com numeros aleatorios com sucesso" << endl;
             else
                 cout << "Dimensão da matriz ainda nao definida ou invalida" << endl;
             break;
         case 4:
-            cout << "\nDigite o tamanho das submatrizes:" << endl;
-            cin >> subMatL >> subMatC;
+            if (matrizCriada) {
+                do {
+                    cout << "\nDigite o tamanho das submatrizes(LXC):" << endl;
+                    cin >> subMatL >> subMatC;
+                } while (subMatL <= 0 or subMatC <= 0);
 
-            criarSubMatrizes(linha, coluna, subMatL, subMatC);
+                criarSubMatrizes(linha, coluna, subMatL, subMatC);
+                cout << "Submatrizes criadas com sucesso" << endl;
+                subMatCriada = true;
+            }
+            else
+                cout << "Matriz nao inicializada" << endl;
             break;
         case 5:
-            cout << "\nDigite o numero de threads desejavel:" << endl;
-            cin >> numThreads;
+            do {
+                cout << "\nDigite o numero de threads desejavel:" << endl;
+                cin >> numThreads;
+            } while (numThreads <= 0);
 
             criarThreads(numThreads);
+            threadsCriada = true;
             break;
         case 6:
-            executar(&tempoTotalSerial, &tempoTotalParalelo, linha, coluna, &serialExec, &paraleloExec);
+            if(matrizCriada and initM and subMatCriada and threadsCriada)
+            {
+                executar(&tempoTotalSerial, &tempoTotalParalelo, linha, coluna, &serialExec, &paraleloExec);
+                relatPronto = true;
+            }
             break;
         case 7:
-            relatorio(tempoTotalSerial, tempoTotalParalelo, serialExec, paraleloExec);
+            if (relatPronto)
+                relatorio(tempoTotalSerial, tempoTotalParalelo, serialExec, paraleloExec);
+            else
+                cout << "Algoritmo nao executado" << endl;
             break;
         case 8:
             encerrar(coluna);
             ctrl = false;
             break;
-        case 9:
-            modoSerial(linha, coluna);
-            break;
+        default:
+            cout << "Opcao Invalida" << endl;
         }
     }
 }
 
 int main() {
     iniciaThreads = CreateEvent(NULL, TRUE, FALSE, NULL);
+    secCritPrimo = CreateMutex(NULL, FALSE, NULL);
 
     menu();
 
